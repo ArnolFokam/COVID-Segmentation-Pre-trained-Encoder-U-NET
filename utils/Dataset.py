@@ -20,6 +20,8 @@ import pandas as pd
 import requests
 from pydicom import dcmread
 import pylibjpeg
+from skimage import measure, morphology
+from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
 from utils.mask import get_mask_instance
 import tensorflow as tf
@@ -27,6 +29,45 @@ import tensorflow as tf
 np.random.seed(42)
 tf.random.set_seed(42)
 session = requests.session()
+
+
+def processimage(img):
+    # function sourced from https://www.kaggle.com/c/data-science-bowl-2017#tutorial
+    # Standardize the pixel values
+    mean = np.mean(img)
+    std = np.std(img)
+    img = img - mean
+    img = img / std
+    middle = img[100:400, 100:400]
+    mean = np.mean(middle)
+    max = np.max(img)
+    min = np.min(img)
+    img[img == max] = mean
+    img[img == min] = mean
+    kmeans = KMeans(n_clusters=2).fit(np.reshape(middle, [np.prod(middle.shape), 1]))
+    centers = sorted(kmeans.cluster_centers_.flatten())
+    threshold = np.mean(centers)
+    thresh_img = np.where(img < threshold, 1.0, 0.0)  # threshold the image
+    eroded = morphology.erosion(thresh_img, np.ones([4, 4]))
+    dilation = morphology.dilation(eroded, np.ones([10, 10]))
+    labels = measure.label(dilation)
+    regions = measure.regionprops(labels)
+    good_labels = []
+    for prop in regions:
+        B = prop.bbox
+        if B[2] - B[0] < 475 and B[3] - B[1] < 475 and B[0] > 40 and B[2] < 472:
+            good_labels.append(prop.label)
+    mask = np.ndarray([512, 512], dtype=np.int8)
+    mask[:] = 0
+    #
+    #  The mask here is the mask for the lungs--not the nodes
+    #  After just the lungs are left, we do another large dilation
+    #  in order to fill in and out the lung mask
+    #
+    for N in good_labels:
+        mask = mask + np.where(labels == N, 1, 0)
+    mask = morphology.dilation(mask, np.ones([10, 10]))  # one last dilation
+    return mask * img
 
 
 def array_to_rgb(x):

@@ -1,36 +1,30 @@
 from tensorflow.python.keras import Input
 from tensorflow.python.keras.applications.vgg16 import VGG16
-from tensorflow.python.keras.layers import UpSampling2D, Conv2D, BatchNormalization, Activation, Concatenate
 from tensorflow.python.keras.models import Model
+
+from models.helpers import unetify_encoder
 
 
 def build_model(input_shape, metrics, loss, optimizer):
     inputs = Input(shape=input_shape, name="input_image")
 
     encoder = VGG16(input_tensor=inputs, weights="imagenet", include_top=False)
-    skip_connection_names = ["input_image", "block_1_expand_relu", "block_3_expand_relu", "block_6_expand_relu"]
-    encoder_output = encoder.get_layer("block_13_expand_relu").output
-    for layer in encoder.layers:
-        layer.trainable = False
+    encoder.trainable = False
 
-    f = [16, 32, 48, 64]
-    x = encoder_output
-    for i in range(1, len(skip_connection_names) + 1, 1):
-        x_skip = encoder.get_layer(skip_connection_names[-i]).output
-        x = UpSampling2D((2, 2))(x)
-        x = Concatenate()([x, x_skip])
+    skip_connection_names = [
+        "block1_conv2",  # 512 x 512
+        "block2_conv2",  # 256 x 256
+        "block3_conv3",  # 128 x 128
+        "block4_conv3",  # 64 x 64
+    ]
 
-        x = Conv2D(f[-i], (3, 3), padding="same")(x)
-        x = BatchNormalization()(x)
-        x = Activation("relu")(x)
+    encoder_output = encoder.get_layer("block5_conv3").output  # 32 x 32
 
-        x = Conv2D(f[-i], (3, 3), padding="same")(x)
-        x = BatchNormalization()(x)
-        x = Activation("relu")(x)
+    num_filters = [64, 128, 256, 512]
+    # num_filters = [16, 32, 64, 128]
 
-    x = Conv2D(1, (1, 1), padding="same")(x)
-    x = Activation("sigmoid")(x)
+    x = unetify_encoder(encoder_output, num_filters, skip_connection_names, encoder)
 
-    model = Model(inputs, x)
+    model = Model(inputs, x, name="uvgg16net")
     model.compile(loss=loss, optimizer=optimizer, metrics=metrics)
     return model
